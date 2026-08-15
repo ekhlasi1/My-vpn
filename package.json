@@ -1,0 +1,38 @@
+{
+  "name": "foxcloud",
+  "version": "1.0.0",
+  "description": "High-performance VLESS proxy server for Cloudflare Workers",
+  "keywords": [
+    "cloudflare",
+    "workers",
+    "proxy",
+    "vless",
+    "websocket",
+    "vpn",
+    "edge-proxy"
+  ],
+  "module": "src/worker.ts",
+  "type": "module",
+  "license": "MIT",
+  "author": {
+    "name": "Hossein Pira",
+    "email": "h3dev.pira@gmail.com"
+  },
+  "scripts": {
+    "build": "rolldown -c",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "generate-uuid": "node scripts/generate-uuid.js",
+    "test": "node src/test/architecture.test.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.37.0",
+    "eslint": "^9.37.0",
+    "rolldown": "^1.0.0-beta.43",
+    "@cloudflare/workers-types": "^4.20251011.0",
+    "typescript-eslint": "^8.46.1",
+    "unplugin-swc": "^1.5.7",
+    "wrangler": "^4.43.0",
+    "typescript": "^5.8.3"
+  }
+}
