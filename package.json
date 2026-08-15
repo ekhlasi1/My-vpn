@@ -1,5 +1,5 @@
 {
-  "name": "foxcloud",
+  "name": "bndmax-vpn",
   "version": "1.0.0",
   "description": "High-performance VLESS proxy server for Cloudflare Workers",
   "keywords": [
