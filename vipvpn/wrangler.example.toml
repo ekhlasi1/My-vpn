@@ -1,0 +1,35 @@
+name = "bndmax-vpn"
+main = "dist/worker.js"
+compatibility_date = "2024-09-23"
+
+[build]
+command = "npm run build"
+
+# Development configuration
+[vars]
+# Generate secure UUIDs using:
+# Linux/macOS: cat /proc/sys/kernel/random/uuid
+# Windows PowerShell: New-Guid
+# Node.js: node -e "console.log(require('crypto').randomUUID())"
+UUID = "your-uuid-here"
+
+# Proxy server configuration
+# Format: IP:port (multiple servers separated by commas)
+PROXY_IP = "your-proxy-ip:443"
+
+# For multiple users, use comma-separated UUIDs:
+# UUID = "uuid1,uuid2,uuid3"
+
+# For multiple proxy servers, use comma-separated IPs:
+# PROXY_IP = "ip1:port1,ip2:port2,ip3:port3"
+# D1 database for the admin dashboard (users, settings, sessions).
+# database_id below is filled in automatically by scripts/ci-setup.js
+# (wired into the [build] command above) on the first deploy.
+[[d1_databases]]
+binding = "DB"
+database_name = "bndmax-vpn-db"
+database_id = "your-d1-database-id"
+
+# Runs hourly maintenance (trial/pro expiry, quota enforcement, 80% usage warnings).
+[triggers]
+crons = ["0 * * * *"]
