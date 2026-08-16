@@ -1,0 +1,27 @@
+name: Extract ZIP (overwrite)
+on:
+  workflow_dispatch:
+    inputs:
+      zip_path:
+        description: 'Path to zip file inside repo (relative to repo root)'
+        required: true
+        default: 'vipvpn-main-updated.zip'
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Ensure unzip installed
+        run: sudo apt-get update && sudo apt-get install -y unzip
+
+      - name: Create output dir
+        run: mkdir -p extracted
+
+      - name: Unzip (overwrite existing files)
+        run: unzip -o "${{ inputs.zip_path }}" -d extracted
+
+      - name: List extracted
+        run: ls -la extracted || true
