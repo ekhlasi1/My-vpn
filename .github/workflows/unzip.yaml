@@ -1,0 +1,34 @@
+name: Extract Zip
+on: workflow_dispatch
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip (overwrite existing files) into root
+        run: |
+          ZIP_FILE=$(find . -iname "*.zip" | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "No zip file found!"
+            exit 1
+          fi
+          echo "Found: $ZIP_FILE"
+          unzip -o -q "$ZIP_FILE" -d .
+          rm "$ZIP_FILE"
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Extract zip into root and overwrite existing files"
+            git push
+          fi
