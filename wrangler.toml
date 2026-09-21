@@ -1,0 +1,45 @@
+# NOTE: this must stay "my-vpn" — it's the Cloudflare Worker slug your
+# Workers Builds Git integration was originally connected under, and Cloudflare
+# always overrides deploys to match that slug regardless of this file (it will
+# open a PR to force this value back if it's changed). Everything else in this
+# project (D1 database name, package.json, docs, dashboard UI) is branded
+# BNDMAX VPN; only this internal Cloudflare resource identifier differs. If
+# you want the slug itself renamed, do it from the Cloudflare dashboard
+# (Workers & Pages -> your Worker -> Settings), then update this to match.
+name = "my-vpn"
+main = "dist/worker.js"
+compatibility_date = "2024-09-23"
+
+[build]
+command = "npm run build"
+
+# Development configuration
+[vars]
+UUID = "08dad8a6-8a6c-4424-9d63-62f3a9bf7f4f,49d598ee-4dfc-4001-95ca-99a5b6002e3c"
+PROXY_IP = "172.66.45.9:443,104.18.128.25:443,162.159.136.94:443"
+# D1 database for the admin dashboard (users, settings, sessions).
+# database_id below is filled in automatically by scripts/ci-setup.js,
+# which runs as part of `npm run build` — BEFORE any `wrangler` process
+# starts, so the id is already correct on disk when wrangler parses this
+# file. You don't need to run `wrangler d1 create` or edit this by hand.
+[[d1_databases]]
+binding = "DB"
+database_name = "bndmax-vpn-db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# NOTE ON MAINTENANCE (expiring trials/pro subs, volume quotas, 80% warnings):
+# This used to run on a [triggers] cron schedule, but Cloudflare's Workers
+# Free plan only allows 5 cron triggers per ACCOUNT (not per worker) — with
+# the multi-worker pool feature (many workers on one account, sharing this
+# same D1 database) that limit gets hit fast and fails the whole deploy, even
+# though only ONE worker actually needs to run this job. So instead,
+# maintenance now runs opportunistically from normal HTTP traffic (see
+# `maybeRunMaintenance` in src/core/handler.ts) — it self-schedules via a
+# timestamp stored in D1 and runs itself roughly once an hour, in the
+# background, without blocking any request. No cron trigger needed at all,
+# on any of the workers, ever — so this specific deploy error can't happen.
+#
+# If you'd still rather use a real Cloudflare cron trigger on your PRIMARY
+# worker only, you can uncomment the block below (and nowhere else):
+# [triggers]
+# crons = ["0 * * * *"]
