@@ -1,0 +1,74 @@
+name: Delete everything except .github
+
+# Put this file at:  .github/workflows/delete-all-except-github.yml
+# Run it from: GitHub -> Actions -> "Delete everything except .github" -> Run workflow
+#
+# Removes EVERY tracked file/folder in the repo except the .github folder.
+# Nothing is lost permanently: the files stay in the git history and can be
+# restored by reverting the commit this workflow creates.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run: only list what WOULD be deleted (no commit)'
+        required: true
+        type: boolean
+        default: true
+      confirm:
+        description: 'For a real run (dry run OFF) type DELETE here'
+        required: false
+        type: string
+      commit_message:
+        description: 'Commit message'
+        required: false
+        type: string
+        default: 'chore: remove everything except .github'
+
+permissions:
+  contents: write
+
+jobs:
+  wipe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check confirmation
+        if: ${{ !inputs.dry_run }}
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "DELETE" ]; then
+            echo "::error::Real run requires typing DELETE in the 'confirm' input."
+            exit 1
+          fi
+
+      - name: Delete everything except .github
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            git rm -r -n -- . ':(exclude).github'
+            echo "---- Dry run: the files above would be deleted. .github is kept. ----"
+          else
+            git rm -r -q -- . ':(exclude).github'
+            echo "Deleted everything except .github. Remaining files:"
+            git ls-files
+          fi
+
+      - name: Commit and push
+        if: ${{ !inputs.dry_run }}
+        env:
+          MESSAGE: ${{ inputs.commit_message }}
+        run: |
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "${MESSAGE:-chore: remove everything except .github}"
+          git push
