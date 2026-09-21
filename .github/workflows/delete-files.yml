@@ -1,0 +1,95 @@
+name: Delete files and folders
+
+# Manual workflow: GitHub -> Actions -> "Delete files and folders" -> Run workflow.
+# Put this file at:  .github/workflows/delete-files.yml
+
+on:
+  workflow_dispatch:
+    inputs:
+      paths:
+        description: 'Files/folders to delete, separated by spaces (globs OK). Example: docs dot-server CHANGELOG-v*.md'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run: only list what WOULD be deleted (no commit)'
+        required: true
+        type: boolean
+        default: true
+      commit_message:
+        description: 'Commit message'
+        required: false
+        type: string
+        default: 'chore: remove files and folders'
+
+permissions:
+  contents: write
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Delete selected paths
+        env:
+          # Passed via env (not interpolated into the script) to avoid shell injection.
+          PATHS: ${{ inputs.paths }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          # Split the input WITHOUT expanding globs yet (so "*" can't silently
+          # turn into "every file in the repo" before the safety checks run).
+          set -f
+          read -ra ITEMS <<< "$PATHS"
+          set +f
+          shopt -s nullglob dotglob
+
+          removed=0
+          for item in "${ITEMS[@]}"; do
+            item="${item#./}"
+
+            # Safety checks
+            case "$item" in
+              /*|..|../*|*/../*|*/..)
+                echo "::error::Refusing unsafe path: $item"; exit 1 ;;
+            esac
+            if [[ "$item" =~ ^[*./?]*$ ]]; then
+              echo "::error::Refusing to delete everything ('$item')"; exit 1
+            fi
+
+            matches=( $item )   # glob expansion happens here, per item
+            found=0
+            for m in "${matches[@]}"; do
+              [ -e "$m" ] || [ -L "$m" ] || continue
+              found=1
+              case "$m" in
+                .git|.git/*|.github|.github/*)
+                  echo "::warning::Skipping protected path: $m"; continue ;;
+              esac
+              if [ "$DRY_RUN" = "true" ]; then
+                git rm -r -n -q -- "$m" && echo "would delete: $m"
+              else
+                git rm -r -q -- "$m" && echo "deleted: $m"
+              fi
+              removed=$((removed + 1))
+            done
+            [ "$found" -eq 1 ] || echo "::warning::No match for: $item"
+          done
+
+          echo "Matched $removed path(s)."
+
+      - name: Commit and push
+        if: ${{ !inputs.dry_run }}
+        env:
+          MESSAGE: ${{ inputs.commit_message }}
+        run: |
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "${MESSAGE:-chore: remove files and folders}"
+          git push
