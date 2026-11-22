@@ -343,7 +343,13 @@ export async function handleRequest(
 
     return new Response('یافت نشد', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
   } catch (err) {
-    console.error('Handler error:', err)
+    // D1 puts the real SQL error in `cause`; log both so the message is never lost.
+    console.error(
+      'Handler error:',
+      err instanceof Error
+        ? `${err.name}: ${err.message}${(err as { cause?: { message?: string } }).cause?.message ? ' | cause: ' + (err as { cause?: { message?: string } }).cause!.message : ''}`
+        : String(err),
+    )
     if (isApi) {
       return jsonResponse(
         { error: err instanceof DbMissingError ? 'دیتابیس D1 به ورکر متصل نیست' : 'خطای داخلی سرور' },

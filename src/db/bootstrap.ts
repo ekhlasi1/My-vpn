@@ -197,6 +197,8 @@ export async function databaseStatus(env: Env): Promise<{ bound: boolean; ready:
     await env.DB.prepare('SELECT 1 FROM settings LIMIT 1').first()
     return { bound: true, ready: true }
   } catch (err) {
-    return { bound: true, ready: false, error: err instanceof Error ? err.message : String(err) }
+    const cause = (err as { cause?: { message?: string } } | null)?.cause?.message
+    const msg = err instanceof Error ? err.message : String(err)
+    return { bound: true, ready: false, error: cause ? `${msg} | cause: ${cause}` : msg }
   }
 }
