@@ -49,8 +49,6 @@ const SCHEMA_STATEMENTS: string[] = [
     notified_step_mb REAL NOT NULL DEFAULT 0,
     wiki_gift_claimed_at INTEGER
   )`,
-  `CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_users_status ON users(status)`,
   `CREATE TABLE IF NOT EXISTS bot_users (
     telegram_id    TEXT PRIMARY KEY,
     telegram_name  TEXT,
@@ -93,7 +91,6 @@ const SCHEMA_STATEMENTS: string[] = [
     last_checked INTEGER NOT NULL,
     last_error   TEXT
   )`,
-  `CREATE INDEX IF NOT EXISTS idx_clean_ips_healthy ON clean_ips(healthy, latency_ms)`,
   `CREATE TABLE IF NOT EXISTS dns_rules (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     kind       TEXT NOT NULL,
@@ -101,7 +98,6 @@ const SCHEMA_STATEMENTS: string[] = [
     note       TEXT,
     created_at INTEGER NOT NULL
   )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_dns_rules_kind_value ON dns_rules(kind, value)`,
 ]
 
 const DEFAULT_SETTINGS: [string, string][] = [
@@ -120,39 +116,79 @@ const DEFAULT_SETTINGS: [string, string][] = [
   ['wiki_gift_link', ''],
 ]
 
-// Columns that older databases (created before a given migration) may lack.
-const COLUMN_MIGRATIONS: { table: string; column: string; ddl: string }[] = [
-  { table: 'users', column: 'notified_step_mb', ddl: 'ALTER TABLE users ADD COLUMN notified_step_mb REAL NOT NULL DEFAULT 0' },
-  { table: 'users', column: 'wiki_gift_claimed_at', ddl: 'ALTER TABLE users ADD COLUMN wiki_gift_claimed_at INTEGER' },
-  { table: 'backend_pool', column: 'cf_account_id', ddl: 'ALTER TABLE backend_pool ADD COLUMN cf_account_id TEXT' },
-  { table: 'backend_pool', column: 'cf_api_token', ddl: 'ALTER TABLE backend_pool ADD COLUMN cf_api_token TEXT' },
-  { table: 'backend_pool', column: 'cf_database_id', ddl: 'ALTER TABLE backend_pool ADD COLUMN cf_database_id TEXT' },
-  { table: 'backend_pool', column: 'cf_script_name', ddl: 'ALTER TABLE backend_pool ADD COLUMN cf_script_name TEXT' },
-  { table: 'backend_pool', column: 'sync_secret', ddl: 'ALTER TABLE backend_pool ADD COLUMN sync_secret TEXT' },
-  { table: 'backend_pool', column: 'health_status', ddl: "ALTER TABLE backend_pool ADD COLUMN health_status TEXT NOT NULL DEFAULT 'unknown'" },
-  { table: 'backend_pool', column: 'last_checked_at', ddl: 'ALTER TABLE backend_pool ADD COLUMN last_checked_at INTEGER' },
-  { table: 'backend_pool', column: 'last_error', ddl: 'ALTER TABLE backend_pool ADD COLUMN last_error TEXT' },
-  { table: 'backend_pool', column: 'last_synced_at', ddl: 'ALTER TABLE backend_pool ADD COLUMN last_synced_at INTEGER' },
+// Every table's columns (besides the primary key). An older database may have
+// the table but lack some of these; `CREATE TABLE IF NOT EXISTS` would silently
+// skip it and a later index/query would die with "no such column". Missing
+// columns are added before anything else touches them. (SQLite requires a
+// DEFAULT on every NOT NULL column added this way.)
+const TABLE_COLUMNS: Record<string, [string, string][]> = {
+  settings: [['value', 'TEXT']],
+  users: [
+    ['telegram_id', 'TEXT'], ['telegram_name', 'TEXT'],
+    ['type', "TEXT NOT NULL DEFAULT 'trial'"], ['status', "TEXT NOT NULL DEFAULT 'active'"],
+    ['volume_limit_mb', 'REAL NOT NULL DEFAULT 0'], ['volume_used_mb', 'REAL NOT NULL DEFAULT 0'],
+    ['created_at', 'INTEGER NOT NULL DEFAULT 0'], ['expires_at', 'INTEGER'], ['last_trial_at', 'INTEGER'],
+    ['warned_80', 'INTEGER NOT NULL DEFAULT 0'], ['note', 'TEXT'],
+    ['notified_step_mb', 'REAL NOT NULL DEFAULT 0'], ['wiki_gift_claimed_at', 'INTEGER'],
+  ],
+  bot_users: [
+    ['telegram_name', 'TEXT'], ['first_seen', 'INTEGER NOT NULL DEFAULT 0'],
+    ['last_seen', 'INTEGER NOT NULL DEFAULT 0'], ['messages', 'INTEGER NOT NULL DEFAULT 1'],
+  ],
+  admin_sessions: [['created_at', 'INTEGER NOT NULL DEFAULT 0'], ['expires_at', 'INTEGER NOT NULL DEFAULT 0']],
+  pro_requests: [
+    ['telegram_id', 'TEXT'], ['telegram_name', 'TEXT'],
+    ['created_at', 'INTEGER NOT NULL DEFAULT 0'], ['status', "TEXT NOT NULL DEFAULT 'pending'"],
+  ],
+  backend_pool: [
+    ['url', "TEXT NOT NULL DEFAULT ''"], ['label', 'TEXT'], ['enabled', 'INTEGER NOT NULL DEFAULT 1'],
+    ['added_at', 'INTEGER NOT NULL DEFAULT 0'], ['cf_account_id', 'TEXT'], ['cf_api_token', 'TEXT'],
+    ['cf_database_id', 'TEXT'], ['cf_script_name', 'TEXT'], ['sync_secret', 'TEXT'],
+    ['health_status', "TEXT NOT NULL DEFAULT 'unknown'"], ['last_checked_at', 'INTEGER'],
+    ['last_error', 'TEXT'], ['last_synced_at', 'INTEGER'],
+  ],
+  dns_rules: [
+    ['kind', "TEXT NOT NULL DEFAULT ''"], ['value', "TEXT NOT NULL DEFAULT ''"],
+    ['note', 'TEXT'], ['created_at', 'INTEGER NOT NULL DEFAULT 0'],
+  ],
+}
+
+// clean_ips is only a cache of probe results (rebuilt automatically every few
+// minutes), so if an old version left it with a different shape it is simply
+// dropped and recreated instead of being patched column by column.
+const CLEAN_IPS_COLUMNS = ['ip', 'latency_ms', 'healthy', 'last_checked', 'last_error']
+
+const INDEX_STATEMENTS: string[] = [
+  `CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_users_status ON users(status)`,
+  `CREATE INDEX IF NOT EXISTS idx_clean_ips_healthy ON clean_ips(healthy, latency_ms)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_dns_rules_kind_value ON dns_rules(kind, value)`,
 ]
+
+async function existingColumns(db: D1Database, table: string): Promise<Set<string>> {
+  const { results } = await db.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>()
+  return new Set((results ?? []).map((r) => r.name))
+}
 
 async function applyBootstrap(env: Env): Promise<void> {
   const db = env.DB
 
+  // 1) Tables that do not exist yet.
   await db.batch(SCHEMA_STATEMENTS.map((sql) => db.prepare(sql)))
 
-  // Add columns missing from databases created by an older version.
-  const tableColumns = new Map<string, Set<string>>()
-  for (const m of COLUMN_MIGRATIONS) {
-    let cols = tableColumns.get(m.table)
-    if (!cols) {
-      const { results } = await db.prepare(`PRAGMA table_info(${m.table})`).all<{ name: string }>()
-      cols = new Set((results ?? []).map((r) => r.name))
-      tableColumns.set(m.table, cols)
-    }
-    if (!cols.has(m.column)) {
+  // 2) Repair tables that already existed with an older/different shape.
+  const cleanCols = await existingColumns(db, 'clean_ips')
+  if (CLEAN_IPS_COLUMNS.some((c) => !cleanCols.has(c))) {
+    const create = SCHEMA_STATEMENTS.find((q) => q.includes('CREATE TABLE IF NOT EXISTS clean_ips'))!
+    await db.batch([db.prepare('DROP TABLE IF EXISTS clean_ips'), db.prepare(create)])
+  }
+
+  for (const [table, columns] of Object.entries(TABLE_COLUMNS)) {
+    const have = await existingColumns(db, table)
+    for (const [name, ddl] of columns) {
+      if (have.has(name)) continue
       try {
-        await db.prepare(m.ddl).run()
-        cols.add(m.column)
+        await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${ddl}`).run()
       } catch (err) {
         // Another isolate may have added it a moment ago — harmless.
         if (!/duplicate column/i.test(String(err))) throw err
@@ -160,6 +196,17 @@ async function applyBootstrap(env: Env): Promise<void> {
     }
   }
 
+  // 3) Indexes only speed things up, so one failing must never take the app
+  //    down (an old table may have a column of a different meaning, etc.).
+  for (const sql of INDEX_STATEMENTS) {
+    try {
+      await db.prepare(sql).run()
+    } catch (err) {
+      console.error('bootstrap: index skipped:', sql.slice(0, 80), String(err))
+    }
+  }
+
+  // 4) Default settings (never overwrites existing values).
   const seed = [
     db
       .prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
